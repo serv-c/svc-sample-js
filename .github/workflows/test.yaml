@@ -1,0 +1,105 @@
+name: Test
+
+on:
+  push:
+    branches-ignore:
+      - master
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  version-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+      - run: npm install
+      - name: Check if version has been updated
+        id: check
+        uses: EndBug/version-check@v2
+        with:
+          diff-search: true
+
+      - name: Version update detected
+        if: steps.check.outputs.changed == 'true'
+        run: 'echo "Version change found! New version: ${{ steps.check.outputs.version }} (${{ steps.check.outputs.type }})"'
+      - name: Version update not detected
+        if: steps.check.outputs.changed == 'false'
+        run: 'echo "Error: Version not change found!". && exit 1'
+
+  build:
+    runs-on: ubuntu-latest
+
+    services:
+      redis:
+        image: redis
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      rabbitmq:
+        image: rabbitmq:latest
+        options: >-
+          --health-cmd "rabbitmqctl node_health_check"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        env:
+          RABBITMQ_DEFAULT_VHOST: test
+
+    strategy:
+      matrix:
+        container: ["node:lts-alpine", "node:current-alpine"]
+
+    container:
+      image: ${{ matrix.container }}
+
+    steps:
+      - uses: actions/checkout@v3
+      - run: npm install
+      - run: npm run build
+      - run: npm run-script testsimple || true
+        env:
+          CACHE_URL: redis://redis
+          BUS_URL: amqp://rabbitmq/test
+      - run: npm run-script testsimple
+        env:
+          CACHE_URL: redis://redis
+          BUS_URL: amqp://rabbitmq/test
+
+  build-docker:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - linux/amd64
+          - linux/arm/v6
+          - linux/arm/v7
+          - linux/arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: ${{ secrets.DOCKER_REPO }}/${{ github.event.repository.name }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      - name: Build
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          push: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
