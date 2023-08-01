@@ -33,6 +33,6 @@
     "typescript": "^5.1.6"
   },
   "dependencies": {
-    "servc-svc-lib-server": "^0.2.2"
+    "servc-svc-lib-server": "^0.2.4"
   }
 }
